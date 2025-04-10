@@ -1203,8 +1203,6 @@ int uv_pipe_connect2(uv_connect_t* req,
     }
 
     uds_addr.sun_family = AF_UNIX;
-
-    /* The namelen was guaranteed to be < UNIX_PATH_MAX above. */
     memcpy(uds_addr.sun_path, name, namelen);
     uds_addr.sun_path[namelen] = '\0';
 
@@ -1224,8 +1222,6 @@ int uv_pipe_connect2(uv_connect_t* req,
       closesocket(uds_client_fd);
       goto error;
     }
-
-    memset(&req->u.io.overlapped, 0, sizeof(req->u.io.overlapped));
 
     req->u.connect.pipeHandle = uds_client_fd;
     req->u.connect.duplex_flags = UV_HANDLE_WRITABLE | UV_HANDLE_READABLE;
