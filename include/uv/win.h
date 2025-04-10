@@ -376,14 +376,7 @@ typedef struct {
       ULONG_PTR result; /* overlapped.Internal is reused to hold the result */\
       HANDLE pipeHandle;                                                      \
       DWORD duplex_flags;                                                     \
-      /* When using unix domain socket, ConnectEx IOCP result will overwrite  
-       * result + pipeHandle, to keep the ABI, reusing the name field to store
-       * the pending uds_socket for connect handler.
-       */                                                                     \
-      union {                                                                 \
-        WCHAR* name;                                                          \
-        SOCKET uds_socket;                                                    \
-      };                                                                      \
+      WCHAR* name;                                                            \
     } connect;                                                                \
   } u;                                                                        \
   struct uv_req_s* next_req;

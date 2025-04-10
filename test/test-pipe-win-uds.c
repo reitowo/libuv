@@ -121,12 +121,13 @@ int test_pipe_win_uds() {
   uv_fs_t fs;
   uv_connect_t req;
   size_t size = MAX_PATH;
+  char tmp_path[MAX_PATH];
   char path[MAX_PATH];
 
   // The windows UDS needs to be created on disk, create in temp dir.
-  r = uv_os_tmpdir(path, &size);
+  r = uv_os_tmpdir(tmp_path, &size);
   ASSERT_OK(r);
-  snprintf(path, sizeof(path), "\\uv_pipe_win_uds");
+  snprintf(path, sizeof(path), "%s\\uv_pipe_win_uds", tmp_path);
 
   // Remove the existing file, the file must not exist before server bind.
   uv_fs_unlink(uv_default_loop(), &fs, path, NULL);

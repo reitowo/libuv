@@ -1101,20 +1101,7 @@ int uv_pipe_connect2(uv_connect_t* req,
 #if defined(UV__ENABLE_WIN_UDS_PIPE)
   int uds_file_exists;
   SOCKET uds_client_fd;
-  struct sockaddr_un uds_addr_bind = {0};
-  struct sockaddr_un uds_addr_real = {0};
-  DWORD uds_dummy_send_cnt = 0;
-
-  /* ConnectEx seems has a bug when using with 'sockaddr_un'.
-   * It seems corrupting stack if no such buffer present on stack.
-   * Looks like needs at least 316 bytes to not overwriting some data onto
-   * valid stack spaces, allocating 512 bytes for 'safety'.
-   *
-   * TODO: It still overflow write to this buffer instead of valid
-   * stack, so it is just a dangerous workaround to write to a controlled
-   * dummy memory instead of causing stack corruption.
-   */
-  char uds_dummy_send_buffer[512] = {0};
+  struct sockaddr_un uds_addr = {0};
 #endif
 
   loop = handle->loop;
@@ -1209,30 +1196,25 @@ int uv_pipe_connect2(uv_connect_t* req,
       goto error;
     }
 
-    /*
-     * If prefix is not "\\.\pipe", we assume it is a Unix Domain Socket.
-     * Although "NamedPipe" is a Windows concept, however in libuv, it has
-     * been abstracted to be a general concept that can be used on all platforms.
-     * Thus, we use Unix Domain Socket as a "named_pipe" backend when the prefix
-     * of the pipe is not matched.
-    */
-
     uds_client_fd = socket(AF_UNIX, SOCK_STREAM, IPPROTO_IP);
     if (uds_client_fd == INVALID_SOCKET) {
       err = WSAGetLastError();
       goto error;
     }
 
-    uds_addr_bind.sun_family = AF_UNIX;
+    uds_addr.sun_family = AF_UNIX;
 
-    /* ConnectEx need to be initially bound */
-    int ret = bind(uds_client_fd, (const struct sockaddr*)&uds_addr_bind, sizeof(uds_addr_bind));
-    if (ret != 0) {
+    /* The namelen was guaranteed to be < UNIX_PATH_MAX above. */
+    memcpy(uds_addr.sun_path, name, namelen);
+    uds_addr.sun_path[namelen] = '\0';
+
+    err = connect(uds_client_fd, (const struct sockaddr*)&uds_addr, sizeof(uds_addr));
+    if (err != 0) {
       err = WSAGetLastError();
       goto error;
     }
 
-    /* Associate it with IOCP so we can get events. */
+    /* Associate it with IOCP so we can get events later. */
     if (CreateIoCompletionPort((HANDLE) uds_client_fd,
                                loop->iocp,
                                (ULONG_PTR) handle,
@@ -1242,44 +1224,12 @@ int uv_pipe_connect2(uv_connect_t* req,
       goto error;
     }
 
-    uds_addr_real.sun_family = AF_UNIX;
-
-    /* The namelen was guaranteed to be < UNIX_PATH_MAX above. */
-    memcpy(uds_addr_real.sun_path, name, namelen);
-    uds_addr_real.sun_path[namelen] = '\0';
-
     memset(&req->u.io.overlapped, 0, sizeof(req->u.io.overlapped));
 
-    /*
-     * https://learn.microsoft.com/en-us/windows/win32/api/mswsock/nc-mswsock-lpfn_connectex
-     * Although doc says the send buffer can be ignored, it will corrupt the
-     * stack if we don't actually allocate them on stack and pass them.
-     */
-    ret = uv_wsa_connectex(uds_client_fd,
-                           (const struct sockaddr*)&uds_addr_real,
-                           sizeof(uds_addr_real),
-                           uds_dummy_send_buffer,
-                           0,
-                           &uds_dummy_send_cnt,
-                           &req->u.io.overlapped);
-
-    if (!ret) {
-      err = WSAGetLastError();
-      if (err != ERROR_IO_PENDING) {
-        closesocket(uds_client_fd);
-        goto error;
-      }
-    }
-
-    /* Since we use IOCP, we can't set value to u.connect.pipeHandle
-     * as it will be rewritten by the result of IOCP. Thus, we set the socket
-     * to uds_socket (reuse the `name`) and set it to pipeHandle later at req
-     * handler.
-     */
-    req->u.connect.uds_socket = uds_client_fd;
+    req->u.connect.pipeHandle = uds_client_fd;
     req->u.connect.duplex_flags = UV_HANDLE_WRITABLE | UV_HANDLE_READABLE;
-
-    /* The req will be processed with IOCP. */
+    SET_REQ_SUCCESS(req);
+    uv__insert_pending_req(loop, (uv_req_t*) req);
     handle->reqs_pending++;
     REGISTER_HANDLE_REQ(loop, handle);
     return 0;
@@ -2724,9 +2674,6 @@ void uv__process_pipe_connect_req(uv_loop_t* loop, uv_pipe_t* handle,
   assert(handle->type == UV_NAMED_PIPE);
 
   if (handle->flags & UV_HANDLE_WIN_UDS_PIPE) {
-    /* IOCP overwrites the connect.pipeHandle, so workaround here. */
-    req->u.connect.pipeHandle = (HANDLE) req->u.connect.uds_socket;
-
     if (req->u.connect.pipeHandle) {
       /* If it is unix domain handle, the event comes from ConnectEx IOCP. */
       setsockopt((SOCKET) req->u.connect.pipeHandle,
