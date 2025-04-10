@@ -1211,6 +1211,7 @@ int uv_pipe_connect2(uv_connect_t* req,
     err = connect(uds_client_fd, (const struct sockaddr*)&uds_addr, sizeof(uds_addr));
     if (err != 0) {
       err = WSAGetLastError();
+      closesocket(uds_client_fd);
       goto error;
     }
 
@@ -1219,8 +1220,8 @@ int uv_pipe_connect2(uv_connect_t* req,
                                loop->iocp,
                                (ULONG_PTR) handle,
                                0) == NULL) {
-      closesocket(uds_client_fd);
       err = GetLastError();
+      closesocket(uds_client_fd);
       goto error;
     }
 
